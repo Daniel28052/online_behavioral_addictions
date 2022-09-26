@@ -1,0 +1,414 @@
+---
+title: "Gen's NA"
+author: "DZ"
+date: '2022-07-31'
+output: word_document
+---
+
+```{r include=FALSE}
+library(bootnet)
+library(haven)
+library(networktools)
+library(NetworkComparisonTest)
+library(qgraph)
+library(tidyverse)
+library(naniar)
+library(mice)
+
+GData <- read_sav("C:/Users/danie/Desktop/Honours Super/Genevieve/dataset.sav")
+```
+
+
+## Percentage of missing data in the dataset and if missing data is missing completely at random (MCAR)
+```{r echo=FALSE, warning=FALSE, message=FALSE}
+GD1 <- GData%>%
+  select(7,102:107,176:186,49:57,187:195,291:296,344:354,238:246,377:385)
+
+## This calculates % of missing data
+Gtotalcells <- prod(dim(GD1))
+Gmissingcells <- sum(is.na(GD1))
+(Gmissingcells * 100)/(Gtotalcells)
+
+mcar_test(GD1)
+```
+
+## Variables with highest number of missing values
+```{r echo=FALSE, warning=FALSE, message=FALSE}
+GD1 %>%
+  select(!1) %>%
+  summarise(across(everything(), ~ sum(is.na(.)))) %>%
+  pivot_longer(cols = everything(), names_to = "names", values_to = "values") %>%
+  arrange(desc(values)) %>%
+  mutate(perc=(values)/462) %>%
+  slice_head(n = 20)
+```
+```{r include=FALSE}
+
+## Data imputation with Predictive Mean Matching (PMM) and 50 iterations 
+GD2 <- sapply(GD1, haven::zap_labels) ## this line converts doubles into integers
+#Gimputed_data <- mice(GD2, m=5, maxit = 50, method = 'pmm', seed = 500)
+#summary(Gimputed_data)
+#GcompleteData <- as_tibble(complete(Gimputed_data,2))
+setwd("C:/Users/danie/Desktop/Honours Super/Genevieve")
+#write_sav(GcompleteData, "Complete_data_g.sav")
+GD3 <- read_sav("Complete_data_g.sav")
+
+GD4 <- GD3 %>%
+  select(!Gender)
+```
+## Estimate network
+```{r echo=FALSE, warning=FALSE, message=FALSE}
+Gnetwork1 <- estimateNetwork(GD4, default="EBICglasso")
+Gnetwork1
+
+## these lines will write an excel file with your correlation matrix
+Gcor_mat <-as_tibble(getWmat(Gnetwork1))
+#write_csv(Gcor_mat, "Correlation matrix_Gen.csv")
+```
+```{r include=FALSE}
+Gb1 <- bootnet(Gnetwork1, boots=1000, type="nonparametric", nCores = 8,
+              statistics=c("strength", "expectedInfluence", "edge"))
+Gb2 <- bootnet(Gnetwork1, boots=1000, type="case", nCores = 8,
+              statistics = c('strength','expectedInfluence',
+                             'betweenness','closeness'))
+```
+
+## Correlation stability coefficient and plot
+CS larger than 0.7 is excellent, 0.5 < CS < 0.7 is acceptable, CS < 0.5 not acceptable
+```{r echo=FALSE, warning=FALSE, message=FALSE}
+corStability(Gb2)
+Gen_plot_cs <- plot(Gb2, "all")
+Gen_plot_cs
+
+#ggsave("Figure_1.tiff", Gen_plot_cs, width = 6, height = 6, dpi=300)
+```
+
+## Network accuracy
+We plot Bootstrapped edge CI's - here we focus on large discrepancies between the red (observed values) and black (bootstrapped mean) lines. We can also look at the size of CI's with larger grey areas showing less confidence
+```{r echo=FALSE, warning=FALSE, message=FALSE}
+Gen_plot_boot <- plot(Gb1, labels = F, order = "sample")
+Gen_plot_boot
+#ggsave("Figure_2.tiff", Gen_plot_boot, width = 6, height = 6, dpi=300)
+```
+```{r include=FALSE}
+## Group nodes per disorder
+Ggroups1 <- list("BSMAS Wave 1" = c(1:6),"OGD Wave 1"=c(7:17),
+                "IGD Wave 1"=c(18:26),"IDS Wave 1"=c(27:35),
+                "BSMAS Wave 2" = c(36:41),"OGD Wave 2"=c(42:52),
+                "IGD Wave 2"=c(53:61),"IDS Wave 2"=c(62:70)) 
+
+qgraph(Gcor_mat, groups=Ggroups1,
+                           color=c('lightblue','orange','coral1','limegreen',
+                             'skyblue2','orange4','coral4','palegreen4'),
+       layout = "spring", minimum = 0, cut = 0, curveAll = T, curveDefault = 0.5,
+       label.color="black", label.prop = 1, label.scale = T, label.scale.equal = T,
+       legend.cex = 0.4, font = 2, vsize = 4, posCol = "blue",
+       borders = T, border.color = 'black', border.width = 0.2,
+       vTrans = 220, usePCH = F, node.resolution = 150)
+```
+
+```{r include=FALSE}
+#Gen_plot_Network <- qgraph(Gcor_mat, groups=Ggroups1,
+ #                          color=c('lightblue','orange','coral1','limegreen',
+  #                           'skyblue2','orange4','coral4','palegreen4'),
+   #    layout = "spring", minimum = 0, cut = 0, curveAll = T, curveDefault = 0.5,
+    #   label.color="black", label.prop = 1, label.scale = T, label.scale.equal = T,
+     #  legend.cex = 0.4, font = 2, vsize = 4, posCol = "blue",
+      # borders = T, border.color = 'black', border.width = 0.2,
+       #vTrans = 220, usePCH = F, node.resolution = 150, filetype = 'tiff',filename="figure_3")
+```
+
+## Plot centrality indices and centrality table
+```{r echo=FALSE, warning=FALSE, message=FALSE}
+
+Gen_plot_cent <- centralityPlot(Gnetwork1, include = "all", 
+               scale = "z-scores", orderBy = "ExpectedInfluence")+
+  theme(aspect.ratio = 6/1)
+#ggsave("Figure_4.tiff", Gen_plot_cent, width = 8, height = 10, dpi=300)
+Gen_plot_cent
+
+Gen_plot_cent$data$measure <- recode_factor(Gen_plot_cent$data$measure, 
+                                            Betweenness = "Between", ExpectedInfluence = "Exp inf",
+                                            Closeness = "Closeness")
+
+
+GCent_table <- as_tibble(centralityTable(Gnetwork1))
+GCent_table %>%
+  pivot_wider(names_from = measure, values_from = value)%>%
+  select(node,ExpectedInfluence) %>%
+  arrange(desc(ExpectedInfluence))%>%
+  slice_head(n=10)
+
+GCent_table %>%
+  pivot_wider(names_from = measure, values_from = value)%>%
+  select(node,Strength) %>%
+  arrange(desc(Strength))%>%
+  slice_head(n=10)
+
+GCent_table %>%
+  pivot_wider(names_from = measure, values_from = value) %>%
+  select(node,Betweenness) %>%
+  arrange(desc(Betweenness))%>%
+  slice_head(n=10)
+
+GCent_table %>%
+  pivot_wider(names_from = measure, values_from = value)%>%
+  select(node,Closeness) %>%
+  arrange(desc(Closeness))%>%
+  slice_head(n=10)
+```
+
+## Plot bridge symptoms
+```{r echo=FALSE, warning=FALSE, message=FALSE}
+Ggraph1 <- qgraph::EBICglasso(cor(GD4), n=dim(GD4)[1])
+Gb <- bridge(Ggraph1, communities = Ggroups1)
+GBStrength <- Gb$`Bridge Strength`
+GBBetween <- Gb$`Bridge Betweenness`
+GBClose <- Gb$`Bridge Closeness`
+GBExpect <- Gb$`Bridge Expected Influence (1-step)`
+Gsymptoms <- GD4%>%
+  pivot_longer(cols = c(1:70), names_to = "symptoms", values_to = "n")%>%
+  select(symptoms) %>%
+  slice_head(n=70)
+
+GBsymptoms <- as_tibble(Gsymptoms,GBStrength,GBBetween,GBClose,GBExpect)%>%
+  mutate(`Strength` = (GBStrength - mean(GBStrength))/sd(GBStrength))%>%
+  mutate(`Between` = (GBBetween - mean(GBBetween))/sd(GBBetween))%>%
+  mutate(`Closeness` = (GBClose - mean(GBClose))/sd(GBClose))%>%
+  mutate(`Exp inf` = (GBExpect - mean(GBExpect))/sd(GBExpect))%>%
+  pivot_longer(cols = c(2:5), names_to = "Bcent", values_to = "n") %>%
+  ggplot(aes(n,symptoms)) +
+  geom_point(size=1.5)+
+  geom_line(group=1) +
+  facet_wrap(vars(Bcent), nrow = 1) +
+  labs(x = "", y = "") +
+  theme(aspect.ratio = 6/1)
+GBsymptoms
+
+library(patchwork)
+patch <- Gen_plot_cent + GBsymptoms
+
+
+as_tibble(Gsymptoms,GBStrength,GBBetween,GBClose,GBExpect)%>%
+  mutate(`Strength` = (GBStrength - mean(GBStrength))/sd(GBStrength))%>%
+  mutate(`Between` = (GBBetween - mean(GBBetween))/sd(GBBetween))%>%
+  mutate(`Closeness` = (GBClose - mean(GBClose))/sd(GBClose))%>%
+  mutate(`Exp inf` = (GBExpect - mean(GBExpect))/sd(GBExpect))%>%
+  arrange(desc(`Exp inf`))
+
+#ggsave("Figure_10.tiff", patch, width = 14, height = 26, dpi=300)
+```
+
+## Examining effects of time point 1 on time point 2
+```{r echo=FALSE, warning=FALSE, message=FALSE}
+Longg <- Gcor_mat %>%
+  slice(1:35) %>%
+  select(36:70)
+#write_csv(Longg,"Long cor mat.csv")
+
+Longg$symptoms <- Gsymptoms%>% slice_head(n=35)
+Longg%>%
+  relocate(symptoms)%>%
+  rowwise()%>%
+  mutate(degree=rowSums(across(everything(), ~(.>0))))%>%
+  mutate(expinf=sum(across(2:36))) %>%
+  arrange(desc(expinf))%>%
+  select(symptoms,degree,expinf) %>%
+  head(n = 10)
+```
+
+# Gender analysis
+```{r echo=FALSE, warning=FALSE, message=FALSE}
+# Create dataset with only males
+GMales <- GD3 %>%
+  filter(Gender==1)%>%
+  select(11:80)
+
+## Create dataset with only females
+GFemales <- GD3 %>%
+  filter(Gender==0) %>%
+  select(11:80)
+```
+
+## Estimate and plot male network
+```{r echo=FALSE, warning=FALSE, message=FALSE}
+Gcor_mat_men <-as_tibble(getWmat(Gnetwork_males <- estimateNetwork(GMales, default="EBICglasso")))
+Gnetwork_males
+Gen_plot_Network_males <- qgraph(Gcor_mat_men, groups=Ggroups1, color=c('lightblue','orange','coral1','limegreen',
+                             'skyblue2','orange4','coral4','palegreen4'),
+       layout = "spring", minimum = 0, cut = 0, curveAll = T, curveDefault = 0.5,
+       label.color="black", label.prop = 1, label.scale = T, label.scale.equal = T,
+       legend.cex = 0.4, font = 2, vsize = 4, posCol = "blue",
+       borders = T, border.color = 'black', border.width = 0.2,
+       vTrans = 220, usePCH = F, node.resolution = 150, filetype = 'tiff',filename="figure_6")
+
+```
+
+## Estimate and plot female network
+```{r echo=FALSE, warning=FALSE, message=FALSE}
+Gcor_mat_women <-as_tibble(getWmat(Gnetwork_females <- estimateNetwork(GFemales, default="EBICglasso")))
+Gnetwork_females
+Gen_plot_Network_females <- qgraph(Gcor_mat_women, groups=Ggroups1, color=c('lightblue','orange','coral1','limegreen',
+                             'skyblue2','orange4','coral4','palegreen4'),
+       layout = "spring", minimum = 0, cut = 0, curveAll = T, curveDefault = 0.5,
+       label.color="black", label.prop = 1, label.scale = T, label.scale.equal = T,
+       legend.cex = 0.4, font = 2, vsize = 4, posCol = "blue",
+       borders = T, border.color = 'black', border.width = 0.2,
+       vTrans = 220, usePCH = F, node.resolution = 150, filetype = 'tiff',filename="figure_7")
+
+```
+
+```{r include=FALSE}
+GComparison <- NCT(Gnetwork_males, Gnetwork_females, gamma, it=100, binary.data = FALSE, 
+                  paired = FALSE, weighted=TRUE, AND=TRUE, test.edges = FALSE, edges = 'ALL')
+```
+
+## Assess invariance across networks
+```{r echo=FALSE, warning=FALSE, message=FALSE}
+
+## Summary of statistics, sig results = non-invariance
+summary(GComparison)
+
+## Plotting differences
+plot(GComparison, what="network")
+plot(GComparison, what="strength")
+```
+
+## Plot centrality indices for males and females
+```{r echo=FALSE, warning=FALSE, message=FALSE}
+Gcent_males <- as_tibble(centralityTable(Gnetwork_males))
+## Females
+Gcent_females <- as_tibble(centralityTable(Gnetwork_females))
+
+## Plot centrality indices for males and females
+Gcent_males$Gender <- 'Males'
+Gcent_females$Gender <- 'Females'
+many_GDF <- list(Gcent_females,Gcent_males)
+GGender <- as_tibble(Reduce(function(...) merge(..., all=T), many_GDF))
+
+Gen_Genderplot <- GGender %>%
+  ggplot(aes(x = node,  y = value, color = Gender, group = Gender)) +
+  geom_point() +
+  geom_line(size=1.0) +
+  coord_flip() +
+  facet_wrap(~measure, nrow = 1)+
+  labs(x = "", y = "")+
+  theme(aspect.ratio = 6/1)
+Gen_Genderplot
+ggsave("Figure_8.tiff", Gen_Genderplot, width = 8, height = 10, dpi=300)
+
+table_cent <- GGender %>%
+  pivot_wider(names_from = measure, values_from = value) %>%
+  group_by(Gender)
+
+table_cent %>%
+  select(Gender,node,Closeness) %>%
+  arrange(desc(Closeness))%>%
+  slice_head(n=10)
+
+table_cent %>%
+  select(Gender,node,Betweenness) %>%
+  arrange(desc(Betweenness))%>%
+  slice_head(n=10)
+
+table_cent %>%
+  select(Gender,node,ExpectedInfluence) %>%
+  arrange(desc(ExpectedInfluence))%>%
+  slice_head(n=10)
+ 
+table_cent %>%
+  select(Gender,node,Strength) %>%
+  arrange(desc(Strength))%>%
+  slice_head(n=10) 
+
+## Write excel files with correlation matrices for males and females
+Gcor_mat_males <- as_tibble(getWmat(Gnetwork_males))
+write_csv(Gcor_mat_males, "Correlation matrix males.csv")
+Gcor_mat_females <- as_tibble(getWmat(Gnetwork_females))
+write_csv(Gcor_mat_females, "Correlation matrix females.csv")
+```
+
+## Bridge symptoms for males and females
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+
+## Prepping male data frame
+Ggraph_males <- qgraph::EBICglasso(cor(GMales), n=dim(GMales)[1])
+GBb_males <- bridge(Ggraph_males, communities = Ggroups1)
+GBStrength_m <- GBb_males$`Bridge Strength`
+GBBetween_m <- GBb_males$`Bridge Betweenness`
+GBClose_m <- GBb_males$`Bridge Closeness`
+GBExpect_m <- GBb_males$`Bridge Expected Influence (1-step)`
+Gsymptoms_m <- GMales%>%
+  pivot_longer(cols = c(1:70), names_to = "symptoms", values_to = "n")%>%
+  select(symptoms) %>%
+  slice_head(n=70)
+
+GBsymptoms_m <- as_tibble(Gsymptoms_m,GBStrength_m,GBBetween_m,GBClose_m,SBExpect_m)%>%
+  mutate(`Bridge strength` = (GBStrength_m - mean(GBStrength_m))/sd(GBStrength_m))%>%
+  mutate(`Bridge between` = (GBBetween_m - mean(GBBetween_m))/sd(GBBetween_m))%>%
+  mutate(`Bridge closeness` = (GBClose_m - mean(GBClose_m))/sd(GBClose_m))%>%
+  mutate(`Bridge expect inf` = (GBExpect_m - mean(GBExpect_m))/sd(GBExpect_m))%>%
+  pivot_longer(cols = c(2:5), names_to = "Bcent", values_to = "n")
+
+## Prepping female data frame
+Ggraph_females <- qgraph::EBICglasso(cor(GFemales), n=dim(GFemales)[1])
+GBb_females <- bridge(Ggraph_females, communities = Ggroups1)
+GBStrength_f <- GBb_females$`Bridge Strength`
+GBBetween_f <- GBb_females$`Bridge Betweenness`
+GBClose_f <- GBb_females$`Bridge Closeness`
+GBExpect_f <- GBb_females$`Bridge Expected Influence (1-step)`
+Gsymptoms_f <- GFemales%>%
+  pivot_longer(cols = c(1:70), names_to = "symptoms", values_to = "n")%>%
+  select(symptoms) %>%
+  slice_head(n=70)
+
+GBsymptoms_f <- as_tibble(Gsymptoms_f,GBStrength_f,GBBetween_f,GBClose_f,GBExpect_f)%>%
+  mutate(`Bridge strength` = (GBStrength_f - mean(GBStrength_f))/sd(GBStrength_f))%>%
+  mutate(`Bridge between` = (GBBetween_f - mean(GBBetween_f))/sd(GBBetween_f))%>%
+  mutate(`Bridge closeness` = (GBClose_f - mean(GBClose_f))/sd(GBClose_f))%>%
+  mutate(`Bridge expect inf` = (GBExpect_f - mean(GBExpect_f))/sd(GBExpect_f))%>%
+  pivot_longer(cols = c(2:5), names_to = "Bcent", values_to = "n")
+
+## Plot centrality indices for males and females
+GBsymptoms_m$Gender <- 'Males'
+GBsymptoms_f$Gender <- 'Females'
+Gen_many_SDF_bridge <- list(GBsymptoms_m,GBsymptoms_f)
+G_bridge_Gender <- as_tibble(Reduce(function(...) merge(..., all=T), Gen_many_SDF_bridge))
+
+Gen_gender_bridgeplot <- G_bridge_Gender %>%
+  ggplot(aes(x = symptoms,  y = n, color = Gender, group = Gender)) +
+  geom_point() +
+  geom_line(size=1.0) +
+  coord_flip() +
+  facet_wrap(~Bcent, nrow = 1)+
+  labs(x = "", y = "")+
+  theme(aspect.ratio = 6/1)
+Gen_gender_bridgeplot
+
+ggsave("Figure_9.tiff", Gen_gender_bridgeplot, width = 8, height = 10, dpi=300)
+
+table_bridge_cent <- G_bridge_Gender %>%
+  pivot_wider(names_from = Bcent, values_from = n) %>%
+  group_by(Gender)
+
+table_bridge_cent %>%
+  select(Gender,symptoms,`Bridge closeness`) %>%
+  arrange(desc(`Bridge closeness`))%>%
+  slice_head(n=10)
+
+table_bridge_cent %>%
+  select(Gender,symptoms,`Bridge between`) %>%
+  arrange(desc(`Bridge between`))%>%
+  slice_head(n=10)
+
+table_bridge_cent %>%
+  select(Gender,symptoms,`Bridge expect inf`) %>%
+  arrange(desc(`Bridge expect inf`))%>%
+  slice_head(n=10)
+ 
+table_bridge_cent %>%
+  select(Gender,symptoms,`Bridge strength`) %>%
+  arrange(desc(`Bridge strength`))%>%
+  slice_head(n=10)
+```
+
